@@ -1,0 +1,114 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+"""
+IVMS LoRa gateway on the Dragino - the laptop LoRa gateway's job, done by the gateway itself.
+
+An Ebyte E32 (same ADDR / CHAN / air rate as the trackers) on a USB-serial adapter in the Dragino's USB port.
+  1. claims LoRa jobs:  GET  <api>/api/v1/sms-gateway/targtec/jobs   (X-TargTec-Mode: Lora)
+  2. writes each job's text ("IVMS <id> LOCATE <key>") to the E32, acks it Sent
+  3. every line heard that starts "IVMS id=" (an answer, or an unsolicited report) is posted to
+                        POST <api>/api/v1/sms-gateway/webhooks/lora   {"sender":"LORA:<imei>","body":<line>}
+Settings: /etc/config/ivmslora (LuCI: Sensor > LoRa / LoRaWAN > IVMS LoRa gateway).
+Python 2.7 + termios + curl only - all already in the firmware.
+"""
+import json, os, select, subprocess, sys, syslog, termios, time
+
+def uci(key, default=""):
+    try:
+        v = subprocess.check_output(["uci", "-q", "get", "ivmslora.general." + key]).strip()
+        return v if v else default
+    except Exception:
+        return default
+
+def log(msg):
+    syslog.syslog(syslog.LOG_INFO, "[ivms-lora] " + msg)
+    if os.isatty(1): print(msg)
+
+BAUDS = {9600: termios.B9600, 19200: termios.B19200, 38400: termios.B38400, 57600: termios.B57600, 115200: termios.B115200}
+
+def open_serial(path, baud):
+    fd = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    a = termios.tcgetattr(fd)
+    a[0] = 0                                                    # iflag: raw
+    a[1] = 0                                                    # oflag: raw
+    a[2] = termios.CS8 | termios.CREAD | termios.CLOCAL         # 8N1, no flow control
+    a[3] = 0                                                    # lflag: no echo, no canonical
+    a[4] = a[5] = BAUDS.get(baud, termios.B9600)
+    a[6][termios.VMIN] = 0
+    a[6][termios.VTIME] = 0
+    termios.tcsetattr(fd, termios.TCSANOW, a)
+    termios.tcflush(fd, termios.TCIOFLUSH)
+    return fd
+
+class Api(object):
+    def __init__(self):
+        self.base = uci("api", "https://api.targtec.com").rstrip("/")
+        self.headers = ["X-TargTec-Mode: Lora", "X-TargTec-Device: " + os.uname()[1]]
+        unit, secret = uci("unit_id"), uci("secret")
+        if unit: self.headers.append("X-TargTec-Gateway-Id: " + unit)
+        if secret: self.headers.append("X-TargTec-Secret: " + secret)
+
+    def call(self, method, path, body=None):
+        cmd = ["curl", "-s", "-m", "20", "-X", method, "-w", "\n%{http_code}"]
+        for h in self.headers: cmd += ["-H", h]
+        if body is not None: cmd += ["-H", "Content-Type: application/json", "--data-binary", json.dumps(body)]
+        try:
+            out = subprocess.check_output(cmd + [self.base + path])
+        except subprocess.CalledProcessError as e:
+            return 0, None
+        text, _, code = out.rpartition("\n")
+        try: return int(code), (json.loads(text) if text.strip() else None)
+        except ValueError: return int(code or 0), None
+
+def imei_of(line):
+    for part in line[5:].split("&"):
+        if part.startswith("id="): return part[3:]
+    return ""
+
+def main():
+    if uci("enabled", "0") != "1":
+        log("disabled (Sensor > LoRa / LoRaWAN > IVMS LoRa gateway)"); return 0
+    port, baud, poll = uci("port", "/dev/ttyUSB0"), int(uci("baud", "9600")), max(3, int(uci("poll", "5")))
+    api = Api()
+    fd, buf, next_poll = None, "", 0
+    while True:
+        if fd is None:
+            try:
+                fd = open_serial(port, baud); log("E32 on %s @ %d, server %s" % (port, baud, api.base))
+            except OSError as e:
+                log("waiting for %s (%s)" % (port, e.strerror)); time.sleep(10); continue
+        # radio -> server
+        try:
+            r, _, _ = select.select([fd], [], [], 0.5)
+            if r:
+                chunk = os.read(fd, 512)
+                if not chunk: raise OSError(5, "adapter gone")
+                buf += chunk
+        except OSError as e:
+            log("serial lost (%s)" % e.strerror); os.close(fd); fd = None; continue
+        while "\n" in buf:
+            line, buf = buf.split("\n", 1)
+            line = line.strip("\r\x00 ")
+            if line.startswith("IVMS id="):
+                code, _ = api.call("POST", "/api/v1/sms-gateway/webhooks/lora", {"sender": "LORA:" + imei_of(line), "body": line})
+                log("heard %s -> server %d" % (line[:80], code))
+        if len(buf) > 2048: buf = ""                             # garbage with no newline: drop it
+        # server -> radio
+        if time.time() >= next_poll:
+            next_poll = time.time() + poll
+            code, res = api.call("GET", "/api/v1/sms-gateway/targtec/jobs?max=5")
+            if code != 200:
+                if code in (401, 403, 503): log("server refused the job poll (%d) - check unit id / secret" % code)
+                continue
+            for job in (res or {}).get("jobs", []):
+                text = (job.get("messageBody") or job.get("MessageBody") or "").strip()
+                jid = job.get("jobId") or job.get("JobId")
+                if not text or jid is None: continue
+                os.write(fd, text + "\n")
+                api.call("POST", "/api/v1/sms-gateway/targtec/jobs/%s/ack" % jid, {"status": "Sent"})
+                log("sent job %s: %s" % (jid, text))
+                time.sleep(1.5)                                  # let the E32 finish the air time before the next one
+
+if __name__ == "__main__":
+    syslog.openlog("ivms-lora")
+    sys.exit(main())
