@@ -24,6 +24,8 @@ def log(msg):
     syslog.syslog(syslog.LOG_INFO, "[ivms-lora] " + msg)
     if os.isatty(1): print(msg)
 
+CA = "/etc/ssl/certs/isrg-root-x1.pem"
+
 BAUDS = {9600: termios.B9600, 19200: termios.B19200, 38400: termios.B38400, 57600: termios.B57600, 115200: termios.B115200}
 
 def open_serial(path, baud):
@@ -50,6 +52,8 @@ class Api(object):
 
     def call(self, method, path, body=None):
         cmd = ["curl", "-s", "-m", "20", "-X", method, "-w", "\n%{http_code}"]
+        # The 2017 CA bundle predates the root Let's Encrypt chains to now (ISRG Root X1): pass it explicitly.
+        if os.path.exists(CA): cmd += ["--cacert", CA]
         for h in self.headers: cmd += ["-H", h]
         if body is not None: cmd += ["-H", "Content-Type: application/json", "--data-binary", json.dumps(body)]
         try:

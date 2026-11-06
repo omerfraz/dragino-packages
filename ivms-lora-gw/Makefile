@@ -27,10 +27,11 @@ define Package/$(PKG_NAME)/conffiles
 endef
 
 define Package/$(PKG_NAME)/install
-	$(INSTALL_DIR) $(1)/usr/bin $(1)/etc/init.d $(1)/etc/config
+	$(INSTALL_DIR) $(1)/usr/bin $(1)/etc/init.d $(1)/etc/config $(1)/etc/ssl/certs
 	$(INSTALL_BIN) ./files/ivms-lora-gw $(1)/usr/bin/ivms-lora-gw
 	$(INSTALL_BIN) ./files/ivmslora.init $(1)/etc/init.d/ivmslora
 	$(INSTALL_CONF) ./files/ivmslora.config $(1)/etc/config/ivmslora
+	$(INSTALL_DATA) ./files/isrg-root-x1.pem $(1)/etc/ssl/certs/isrg-root-x1.pem
 endef
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
