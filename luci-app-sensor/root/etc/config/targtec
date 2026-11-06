@@ -1,0 +1,3 @@
+
+config settings 'general'
+	option routine_script 'targtec_process.sh'

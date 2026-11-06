@@ -8,6 +8,7 @@ sv.default = "mqtt"
 sv:value("disabled",  "Disable")
 sv:value("lorawan",  "LoRaWAN")
 sv:value("mqtt",  "MQTT Server")
+sv:value("targtec",  "TARGTEC Server")
 sv:value("gpstrack",  "GPSWOX Server")
 sv:value("tcp_client",  "TCP/IP Protocol")
 

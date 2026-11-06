@@ -23,6 +23,7 @@ local st = s:option(ListValue, "server_type", translate("Select Server"))
 st.placeholder = "Select MQTT Server"
 st.default = "general"
 st:value("general",  "General Server")
+st:value("targtec",  "TARGTEC Server")
 st:value("lewei50",  "Lewei50")
 st:value("thingspeak",  "ThingSpeak MQTT")
 st:value("mydevices",  "myDevices")

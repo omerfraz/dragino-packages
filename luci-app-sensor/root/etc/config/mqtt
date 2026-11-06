@@ -24,3 +24,9 @@ config servers 'lewei50'
 	option topic_format '/lw/u/CLIENTID_CHANNEL'
 	option data_format 'DATA'
 
+
+config servers 'targtec'
+	option server 'track.targtec.com'
+	option port '1883'
+	option topic_format 'CLIENTID/CHANNEL/data'
+	option data_format 'DATA'

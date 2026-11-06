@@ -9,3 +9,8 @@ config settings 'gpswox'
 	option valid_api 'unvalid'
 	option server '109.235.68.205'
 
+
+config settings 'targtec'
+	option server 'track.targtec.com'
+	option port '5055'
+	option device_id ''
